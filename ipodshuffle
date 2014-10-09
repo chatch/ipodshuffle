@@ -28,7 +28,7 @@
 # GNUpod 0.98 or later is required.
 #
 # If you have never used this Shuffle before with GNUpod or this
-# script, you MUST first run gnupod_INIT.pl
+# script, you MUST first run gnupod_INIT
 #
 # Unless you happen to enjoy ALWAYS using the -m option, you should
 # define the environmental variable $IPOD_MOUNTPOINT
@@ -189,16 +189,16 @@ EOF
 # we will conservatively do a tunes2pod EVERY time.
 sub init {
 
-    my $rc = `tunes2pod.pl -m $ips_mountpoint 2>&1`;
+    my $rc = `tunes2pod -m $ips_mountpoint 2>&1`;
 
     # show tunes2pod output if in debug mode
     print "$rc\n" if ($debug);
 
-    # tunes2pod.pl is stupid.  It returns 1 if we are already
+    # tunes2pod is stupid.  It returns 1 if we are already
     # up to date, and that's not an error, methinks.
     # Hence the kludge.
 
-    if ($rc =~ m/I don\'t think that you have to run tunes2pod.pl/) {
+    if ($rc =~ m/I don\'t think that you have to run tunes2pod/) {
         print "Using iPod Shuffle on $ips_mountpoint\n" unless ($silent);
     } elsif ($?) {
         print STDERR "Error synchronizing iPod Shuffle on $ips_mountpoint\n";
@@ -282,7 +282,7 @@ sub addsong {
     my $item = escape_shell_metacharacters($songfile);
 
     # call gnupod_addsong
-    my $cmd = "gnupod_addsong.pl -m $ips_mountpoint -p $ips_playlist $item";
+    my $cmd = "gnupod_addsong -m $ips_mountpoint -p $ips_playlist $item";
     $cmd .= " > /dev/null 2>&1" unless ($debug);
 
     my $rc = system $cmd;
@@ -304,7 +304,7 @@ sub addsong {
 sub clear_iPS {
 
     # delete every id
-    my $cmd = "gnupod_search.pl -i \"[0-9]*\" -m $ips_mountpoint --delete";
+    my $cmd = "gnupod_search -i \"[0-9]*\" -m $ips_mountpoint --delete";
     $cmd .= " > /dev/null 2>&1" unless ($debug);
 
     my $rc = system $cmd;
@@ -321,7 +321,7 @@ sub clear_iPS {
 # preps iPod for removal
 sub cleanup_iPS {
 
-    my $rc = `mktunes.pl -m $ips_mountpoint -n $ipodname 2>&1`;
+    my $rc = `mktunes -m $ips_mountpoint -n $ipodname 2>&1`;
 
     # show mktunes output if in debug mode
     print "$rc\n" if ($debug);
