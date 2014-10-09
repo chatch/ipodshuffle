@@ -124,7 +124,7 @@ if ($help) {
 }
 
 # We must re-sync first, to be safe
-init();
+#init();
 
 # if we're loading or wiping, we need to clear the Shuffle
 if ($load || $wipe) {
