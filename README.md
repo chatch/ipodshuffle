@@ -9,3 +9,8 @@ Requires the gnupod-tools package:
 
  apt-get install gnupod-tools
 
+See https://www.gnu.org/software/gnupod/ for gnupod docs.
+
+NOTE:
+ You will need to run gnupod_INIT first. Until init() is fixed.
+
