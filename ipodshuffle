@@ -1,0 +1,356 @@
+#!/usr/bin/perl
+#
+# ipodshuffle
+# Copyright (C) 2005 Walter Chang <walter@cs.utexas.edu>
+#
+# Loads music into an iPod Shuffle
+#
+# ipodshuffle performs all of the operations that could
+# reasonably be considered interesting on an iPod Shuffle.
+# Namely, wipe and load.  There really isn't much more you
+# CAN do with a Shuffle.
+#
+# The following options are supported:
+#
+# -h, --help                     Displays this text
+# -m, --mount=path, --ipod=path  Shuffle mount point, default is
+#                                $IPOD_MOUNTPOINT or /mnt/removable
+# -w, --wipe                     Erases all music on the Shuffle
+# -a, --add=playlist             Adds playlist to end of the Shuffle's
+#                                current playlist
+# -l, --load=playlist            Makes the Shuffle's music match the
+#                                playlist (equivalent to a wipe followed
+#                                by an add)
+#     --name=ipodname            Names the iPod Shuffle (for iTunes)
+# -d, --debug, --verbose         Show GNUpod output
+#     --silent, --quiet          Do not display progress messages
+#
+# GNUpod 0.98 or later is required.
+#
+# If you have never used this Shuffle before with GNUpod or this
+# script, you MUST first run gnupod_INIT.pl
+#
+# Unless you happen to enjoy ALWAYS using the -m option, you should
+# define the environmental variable $IPOD_MOUNTPOINT
+#
+# You should define the name of your Shuffle in the environmental
+# variable $IPOD_SHUFFLE_NAME
+#
+# ipodshuffle expects .m3u playlists (a la Winamp, XMMS).  These
+# playlists are just simple lists of files, with relative or absolute
+# paths.  Most of the time, you'll just be using this to make the
+# Shuffle match a playlist on your computer.  For example,
+#
+#     ipodshuffle --load=party.m3u
+#
+# Any other things should be self-explanatory.  See source code.
+#
+#
+# Untested things:
+#
+# * GNUpod can dynamically convert FLAC and OGG on load.  I doubt
+#   this script copes well with that.
+# * This doesn't check if the Shuffle is full, nor does it do anything
+#   smart if it is.
+#
+# Credits:
+#
+# Original version by Walter Chang <walter@cs.utexas.edu>
+# Some m3u code adapted from m3udo by Lucas Gonze <lucas@gonze.com>
+#
+#
+# Changelog:
+#
+# 5 March 2005:
+# * First version
+#
+#
+# Legal Biolerplate
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+#
+# iTunes, iPod, iPod Shuffle are all trademarks of Apple.
+# Obviously, this program is not officially supported by Apple.
+#
+
+use File::Basename;
+use File::Spec;
+use Getopt::Long;
+
+# read mount point from environmental variable IPOD_MOUNTPOINT
+# if no mountpoint is in the environment, use a default
+$ips_mountpoint = $ENV{'IPOD_MOUNTPOINT'};
+$ips_mountpoint = "/mnt/removable" unless ($ips_mountpoint);
+
+# iPod Shuffle constants
+# The one playlist in the Shuffle is named simply IPOD
+my $ips_playlist = "IPOD";
+
+# the default name for this iPod Shuffle
+# I don't like the default of "GNUpod-0.98" so we read from
+# the environment or use a better default
+$ipodname = $END{'IPOD_SHUFFLE_NAME'};
+$ipodname = "euterpe" unless ($ipodname);   # Greek Muse of music
+
+# Track errors
+my $err = 0;
+
+# Figure out options.  See help text.
+GetOptions ('ipod|m|mount:s' => \$ips_mountpoint,
+            'debug|d|verbose' => \$debug,
+            'silent|quiet' => \$silent,
+            'add:s' => \$add,
+            'load:s' => \$load,
+            'wipe' => \$wipe,
+            'name' => \$ipodname,
+            'help|h' => \$help );
+
+# if help is requested, display and exit
+if ($help) {
+    show_help();
+    exit 0;
+}
+
+# We must re-sync first, to be safe
+init();
+
+# if we're loading or wiping, we need to clear the Shuffle
+if ($load || $wipe) {
+    clear_iPS();
+}
+
+# if we're wiping, just wipe and exit
+if ($wipe) {
+    cleanup_iPS();
+    exit;
+}
+
+# Load or Add songs
+# You're not supposed to do both load AND add, but if you do,
+# the sensible thing is load THEN add
+
+if ($load) {
+    read_m3u($load);
+}
+
+if ($add){
+    read_m3u($add);
+}
+
+# we're happy, regenerate iTunesDB
+cleanup_iPS();
+
+exit $err;
+
+
+# ----------------------------
+
+
+# displays help text
+sub show_help {
+
+    die << "EOF";
+Usage: ipodshuffle-load [options]
+Performs operations on a mounted iPod Shuffle.
+
+  -h, --help                     Displays this text
+  -m, --mount=path, --ipod=path  Shuffle mount point, default is
+                                 \$IPOD_MOUNTPOINT or /mnt/removable
+  -w, --wipe                     Erases all music on the Shuffle
+  -a, --add=playlist             Adds playlist to end of the Shuffle's
+                                 current playlist
+  -l, --load=playlist            Makes the Shuffle's music match the
+                                 playlist (equivalent to a wipe followed
+                                 by an add)
+      --name=ipodname            Names the iPod Shuffle (for iTunes)
+  -d, --debug, --verbose         Show GNUpod output
+      --silent, --quiet          Do not display progress messages
+
+Read the source code in $0 for more details.
+
+Bugs and suggestions to <walter\@cs.utexas.edu>
+EOF
+}
+
+
+# Since the Shuffle might have been sullied by non-GNU hands,
+# we will conservatively do a tunes2pod EVERY time.
+sub init {
+
+    my $rc = `tunes2pod.pl -m $ips_mountpoint 2>&1`;
+
+    # show tunes2pod output if in debug mode
+    print "$rc\n" if ($debug);
+
+    # tunes2pod.pl is stupid.  It returns 1 if we are already
+    # up to date, and that's not an error, methinks.
+    # Hence the kludge.
+
+    if ($rc =~ m/I don\'t think that you have to run tunes2pod.pl/) {
+        print "Using iPod Shuffle on $ips_mountpoint\n" unless ($silent);
+    } elsif ($?) {
+        print STDERR "Error synchronizing iPod Shuffle on $ips_mountpoint\n";
+        exit 1;
+    } else {
+        print "Synchronized iPod Shuffle on $ips_mountpoint\n" unless ($silent);
+    }
+}
+
+
+# reads an m3u playlist and adds to the Shuffle
+sub read_m3u {
+    my ( $fname ) = @_;
+
+    my $absfname;
+
+    # Well-behaved, civilized .m3u files use relative paths.
+    # Absolute paths are bad manners.  But this means we need
+    # to figure out where the m3u is to calculate the base path.
+
+    my $relpath = dirname($fname);
+
+    print "Adding songs from $fname\n" unless ($silent);
+
+    open(M3U, $fname) or die "Can't open playlist $fname\n";
+
+
+    # start pulling the filenames out of the playlist, in order
+
+    while (<M3U>) {
+
+        # eat leading whitespace
+        s/(^\s*)(.*)(\s*$)/$2/g;
+
+        # trim CR (for DOS/Unix reasons)
+        s/(.*)(\r$)/$1/g;
+
+        # ignore comments (includes all EXTINFO!)
+        # Lookie here, the Shuffle doesn't even have a screen,
+        # so who cares whether the ID3 or EXTM3U should be used...
+        if ( /^\#/ ) {
+            next;
+        }
+
+        # skip empty lines
+        if ( !length($_) ) {
+            next;
+        }
+
+        chomp();
+
+        # find the absolute path
+
+        # if we're an absolute path, do no more, otherwise
+        # we need to resolve the relative path.
+        # (absolute paths in Unix begin with "/" right?
+
+        $absfname = $_;
+
+        if (substr($absfname,0,1) ne "/") {
+            $absfname = $relpath. "/" . $absfname;
+        }
+
+
+        # add this song to the Shuffle
+        addsong($absfname);
+
+    }
+
+    # we're done with this playlist
+    close(M3U);
+
+}
+
+
+# adds a song to iPod at end of playlist
+sub addsong {
+    my ( $songfile ) = @_;
+
+    # ditch shell metacharacters
+    my $item = escape_shell_metacharacters($songfile);
+
+    # call gnupod_addsong
+    my $cmd = "gnupod_addsong.pl -m $ips_mountpoint -p $ips_playlist $item";
+    $cmd .= " > /dev/null 2>&1" unless ($debug);
+
+    my $rc = system $cmd;
+
+    # Note: It seems that gnupod_addsong isn't good about returning
+    # error codes.  For instance, you can add a song to a full Shuffle
+    # and still get return code 0.  If the GNUpod folks get around to
+    # fixing that, this code will have a point.
+    if ($rc != 0) {
+        print STDERR "Error loading song $songfile\n";
+        $err = 1;
+    } else {
+        print "Loaded $songfile\n" unless ($silent);
+    }
+}
+
+
+# removes ALL songs from the shuffle
+sub clear_iPS {
+
+    # delete every id
+    my $cmd = "gnupod_search.pl -i \"[0-9]*\" -m $ips_mountpoint --delete";
+    $cmd .= " > /dev/null 2>&1" unless ($debug);
+
+    my $rc = system $cmd;
+
+    if ($rc != 0) {
+        print STDERR "Error clearing iPod Shuffle\n";
+        $err = 1;
+    } else {
+        print "Cleared songs on iPod Shuffle\n" unless ($silent);
+    }
+
+}
+
+# preps iPod for removal
+sub cleanup_iPS {
+
+    my $rc = `mktunes.pl -m $ips_mountpoint -n $ipodname 2>&1`;
+
+    # show mktunes output if in debug mode
+    print "$rc\n" if ($debug);
+
+    if ($? != 0) {
+        print STDERR "Error regenerating iTunes database\n";
+	$err = 1;
+    } else {
+
+        $rc =~ /You can now umount your iPod. \[Files: ([0-9]+)\]/;
+        print "iTunesDB updated (containing $1 files)\n" unless ($silent);
+	print "You can now unmount your iPod Shuffle\n";
+    }
+}
+
+
+
+# Since we're feeding things to the command shell, we need to
+# escape a bunch of characters
+sub escape_shell_metacharacters {
+   my( $str ) = @_;
+
+   @_ = $str;
+
+   # this list of dangerous characters is far from exhaustive, but
+   # ultimately the responsibility has to rest on the user to inspect
+   # filenames before passing them to this script.
+   $str =~   s/([;<>\*\|`&\$!#\(\)\[\]\{\}:'"!# ])/\\$1/g;
+
+   return $str;
+}
+
